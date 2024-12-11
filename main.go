@@ -113,18 +113,34 @@ encrypted: ""`
 	return config, nil
 }
 
+// 采集数据并发送数据的封装方法
+func collectAndSendData(source string, data interface{}) {
+	// 获取配置
+	config, err := LoadConfig()
+	if err != nil {
+		log.Printf("加载配置失败: %v", err)
+		return
+	}
+
+	// 使用配置中的信息，处理采集并发送数据
+	metricsURL := config.Agent.MetricsURL
+	project := config.Agent.Project
+	key := []byte(config.Encrypted)
+
+	// 异步发送数据
+	go func() {
+		// 发送数据
+		if err := Middleware.SendData(metricsURL, project, data, key, source); err != nil {
+			log.Printf("发送 %s 信息失败: %v", source, err)
+		}
+	}()
+}
+
 func main() {
 	config, err := LoadConfig()
 	if err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
-
-	if config.Agent.Project == "" || config.Agent.MetricsURL == "" {
-		log.Fatal("必须提供项目名称和 URL 参数")
-	}
-
-	key := []byte(config.Encrypted) // 使用配置文件中的加密密钥
-
 	// 主循环，保持程序运行
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -136,74 +152,74 @@ func main() {
 
 			// 检查是否在0秒或5秒时发送主机信息数据
 			if currentSecond%5 == 0 {
+				// 获取主机信息
 				hostInfoSlice, err := Metrics.GetHostInfo()
 				if err != nil {
 					log.Printf("获取主机信息失败: %v", err)
 					continue
 				}
-				// 发送主机信息数据
-				if err := Middleware.SendData(config.Agent.MetricsURL, config.Agent.Project, hostInfoSlice, key, "hard"); err != nil {
-					log.Printf("发送主机信息失败: %v", err)
-				}
+				// 调用封装方法发送主机信息数据
+				collectAndSendData("hard", hostInfoSlice)
+
+				// 获取心跳信息
 				ActiveInfo, err := Metrics.IsActive(config.Agent.Project)
 				if err != nil {
 					log.Printf("获取心跳数据失败: %v", err)
 					continue
 				}
-				// 发送心跳数据
-				if err := Middleware.SendData(config.Agent.MetricsURL, config.Agent.Project, ActiveInfo, key, "heart"); err != nil {
-					log.Printf("发送心跳数据失败: %v", err)
-				}
-				// 如果 Nginx 采集被启用
+				// 调用封装方法发送心跳信息数据
+				collectAndSendData("heart", ActiveInfo)
+
+				// 如果 Nginx 采集被启用，发送 Nginx 信息
 				if config.Metrics.Nginx.Enable {
-					// 获取 Nginx 状态信息
 					NginxInfo, err := Metrics.GetNginxInfo()
 					if err != nil {
 						log.Printf("获取 nginx 信息失败: %v", err)
-						return
+						continue
 					}
-
-					// 发送 Nginx 信息数据
-					if err := Middleware.SendData(config.Agent.MetricsURL, config.Agent.Project, NginxInfo, key, "nginx"); err != nil {
-						log.Printf("发送 nginx 信息失败: %v", err)
-					}
+					// 调用封装方法发送 Nginx 信息数据
+					collectAndSendData("nginx", NginxInfo)
 				}
-				// 如果 config.Metrics.K8S.Enable 为 true，处理 Kubernetes 信息
-				if config.Metrics.K8S.Enable {
-					// 获取 Kubernetes 客户端和 Metrics 客户端
-					clientset, metricsClient, err := Metrics.InitializeClients(config.Metrics.K8S.ConfigPath) // 使用 config 文件中提供的路径
-					if err != nil {
-						log.Fatalf("初始化客户端失败: %v", err)
-					}
 
-					// 获取 Pod 资源信息
+				// 如果 config.Metrics.K8S.Enable 为 true，发送 Kubernetes 信息
+				if config.Metrics.K8S.Enable {
+					clientset, metricsClient, err := Metrics.InitializeClients(config.Metrics.K8S.ConfigPath)
+					if err != nil {
+						log.Printf("初始化 Kubernetes 客户端失败: %v", err)
+						continue
+					}
 					containerResources, err := Metrics.GetPodResources(clientset, metricsClient)
 					if err != nil {
-						log.Fatalf("获取资源信息失败: %v", err)
+						log.Printf("获取 Kubernetes 资源信息失败: %v", err)
+						continue
 					}
+					// 调用封装方法发送 Kubernetes 信息数据
+					collectAndSendData("k8s", containerResources)
 
-					// 发送 Pod 资源信息数据
-					if err := Middleware.SendData(config.Agent.MetricsURL, config.Agent.Project, containerResources, key, "k8s"); err != nil {
-						log.Printf("发送 Kubernetes 信息失败: %v", err)
+					controllerResources, err := Metrics.GetControllerResources(clientset)
+					if err != nil {
+						log.Printf("获取 Kubernetes 控制器资源信息失败: %v", err)
+						continue
 					}
+					// 调用封装方法发送 Kubernetes 信息数据
+					collectAndSendData("k8sController", controllerResources)
 				}
+
+				// 如果 config.Metrics.Ssl.Enable 为 true，发送 SSL 信息
 				if config.Metrics.Ssl.Enable {
-					SslInfos, err := Metrics.GetSslInfo() // 获取 Ssl 信息
+					SslInfos, err := Metrics.GetSslInfo()
 					if err != nil {
 						log.Printf("获取 Ssl 信息失败: %v", err)
-						return
+						continue
 					}
-
 					var SslData []map[string]interface{}
-					err = json.Unmarshal([]byte(SslInfos), &SslData) // 解析 Ssl 信息
+					err = json.Unmarshal([]byte(SslInfos), &SslData)
 					if err != nil {
 						log.Printf("解析 Ssl 信息失败: %v", err)
-						return
+						continue
 					}
-
-					if err := Middleware.SendData(config.Agent.MetricsURL, config.Agent.Project, SslData, key, "ssl"); err != nil {
-						log.Printf("发送 Ssl 信息失败: %v", err)
-					}
+					// 调用封装方法发送 SSL 信息数据
+					collectAndSendData("ssl", SslData)
 				}
 			}
 		}

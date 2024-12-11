@@ -1,10 +1,13 @@
 package Metrics
 
 import (
-	"agent/Middleware"
 	"context"
 	"fmt"
-	corev1 "k8s.io/api/core/v1" // 需要导入 corev1 包
+	"log"
+	"time"
+
+	"agent/Middleware"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -15,6 +18,8 @@ import (
 
 // 初始化 Kubernetes 客户端和 Metrics 客户端
 func InitializeClients(kubeconfig string) (*kubernetes.Clientset, *metricsclient.Clientset, error) {
+	//start := time.Now() // 开始计时
+
 	// 构建 Kubernetes 配置
 	var config *rest.Config
 	var err error
@@ -45,26 +50,29 @@ func InitializeClients(kubeconfig string) (*kubernetes.Clientset, *metricsclient
 		return nil, nil, fmt.Errorf("无法创建 Metrics 客户端: %v", err)
 	}
 
+	//log.Printf("初始化 Kubernetes 和 Metrics 客户端耗时: %v", time.Since(start)) // 打印耗时
 	return clientset, metricsClient, nil
 }
 
-// 获取 Pod 资源信息
+// 获取所有 Pod 和容器的资源状态
 func GetPodResources(clientset *kubernetes.Clientset, metricsClient *metricsclient.Clientset) ([]Middleware.ContainerResource, error) {
+	//start := time.Now() // 记录获取 Pod 资源信息的开始时间
+
 	var containerResources []Middleware.ContainerResource
 
-	// 获取所有 Pods
+	// 获取所有 namespaces 下的所有 Pods
 	pods, err := clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("无法获取所有 Pods: %v", err)
 	}
 
-	// 获取所有 PodMetrics
+	// 获取所有 namespaces 下的所有 PodMetrics
 	podMetrics, err := metricsClient.MetricsV1beta1().PodMetricses("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("无法获取所有 PodMetrics: %v", err)
 	}
 
-	// 遍历 Pods 获取资源信息
+	// 遍历所有 Pods 获取资源信息
 	for _, pod := range pods.Items {
 		controllerName := getControllerName(&pod)
 		for _, container := range pod.Spec.Containers {
@@ -88,25 +96,91 @@ func GetPodResources(clientset *kubernetes.Clientset, metricsClient *metricsclie
 				}
 			}
 
-			// 创建容器资源数据
-			containerResource := Middleware.ContainerResource{
-				Namespace:      pod.Namespace,
-				PodName:        pod.Name,
-				ControllerName: controllerName,
-				Container:      container.Name,
-				LimitCpu:       limitCpu,
-				LimitMemory:    limitMemory,
-				RequestCpu:     requestCpu,
-				RequestMemory:  requestMemory,
-				UseCpu:         float64(cpuUsage) / 1000.0, // 使用 float64 类型并转换为 CPU 核心数
-				UseMemory:      memUsage,                   // 使用 int64 类型
+			// 获取容器的重启次数
+			restartCount := getRestartCount(container.Name, pod.Status.ContainerStatuses)
+
+			// 获取容器的上一次终止时间
+			var lastTerminationTimeUnix int64
+			var lastTerminationTime int64 // 用于存储时间差（以分钟为单位）
+			for _, containerStatus := range pod.Status.ContainerStatuses {
+				if containerStatus.Name == container.Name && containerStatus.LastTerminationState.Terminated != nil {
+					// 转换为 Unix 毫秒时间戳
+					lastTerminationTimeUnix = containerStatus.LastTerminationState.Terminated.FinishedAt.UnixMilli()
+
+					// 计算当前时间与上次终止时间的时间差（单位：毫秒）
+					now := time.Now().UnixMilli() // 当前时间的毫秒时间戳
+					timeDiff := now - lastTerminationTimeUnix
+
+					// 如果时间差大于等于一分钟，计算分钟数
+					if timeDiff >= 60000 { // 如果大于等于一分钟
+						lastTerminationTime = timeDiff / 60000 // 转换为分钟
+					} else {
+						lastTerminationTime = 0 // 小于一分钟，忽略
+					}
+				}
 			}
 
-			// 将容器资源数据添加到切片
+			// 创建容器资源数据
+			containerResource := Middleware.ContainerResource{
+				Namespace:           pod.Namespace,
+				PodName:             pod.Name,
+				ControllerName:      controllerName,
+				Container:           container.Name,
+				LimitCpu:            limitCpu,
+				LimitMemory:         limitMemory,
+				RequestCpu:          requestCpu,
+				RequestMemory:       requestMemory,
+				UseCpu:              float64(cpuUsage) / 1000.0,
+				UseMemory:           memUsage,
+				RestartCount:        int(restartCount),   // 设置重启次数
+				LastTerminationTime: lastTerminationTime, // 新增字段，转换为秒
+			}
+
+			// 添加到结果集中
 			containerResources = append(containerResources, containerResource)
 		}
 	}
+
+	//log.Printf("获取所有 Pod 资源信息总耗时: %v", time.Since(start)) // 打印获取 Pod 资源的总耗时
 	return containerResources, nil
+}
+
+// 获取容器的重启时间戳
+func getContainerRestartTime(containerName string, containerStatuses []corev1.ContainerStatus) *time.Time {
+	for _, status := range containerStatuses {
+		if status.Name == containerName {
+			log.Printf("正在检查容器 %s 的状态", containerName)
+
+			// 检查容器是否有终止状态
+			if status.State.Terminated != nil {
+				log.Printf("容器 %s 终止状态，原因: %s，结束时间: %v", containerName, status.State.Terminated.Reason, status.State.Terminated.FinishedAt)
+				// 如果容器是由于错误或者终止而重启，返回重启时间
+				return &status.State.Terminated.FinishedAt.Time
+			}
+
+			// 如果容器处于运行状态，输出日志
+			if status.State.Running != nil {
+				log.Printf("容器 %s 当前处于运行状态，启动时间: %v", containerName, status.State.Running.StartedAt)
+			}
+
+			// 如果容器处于等待状态，输出日志
+			if status.State.Waiting != nil {
+				log.Printf("容器 %s 当前处于等待状态，原因: %s", containerName, status.State.Waiting.Reason)
+			}
+		}
+	}
+	log.Printf("未找到容器 %s 的重启时间", containerName)
+	return nil // 如果没有找到重启时间，则返回 nil
+}
+
+// 获取容器的重启次数
+func getRestartCount(containerName string, containerStatuses []corev1.ContainerStatus) int32 {
+	for _, status := range containerStatuses {
+		if status.Name == containerName {
+			return status.RestartCount // 返回容器的重启次数
+		}
+	}
+	return 0 // 如果没有找到对应容器，返回 0
 }
 
 // 获取控制器名称（如 ReplicaSet、Deployment 等）
@@ -149,79 +223,4 @@ func getMemoryUsage(memory resource.Quantity) int64 {
 		return 0
 	}
 	return memory.Value() // 返回字节数
-}
-
-// 获取所有命名空间下的所有控制器的副本信息
-func GetAllNamespacesReplicasCount(clientset *kubernetes.Clientset) ([]Middleware.ControllerResource, error) {
-	// 获取所有副本集 (ReplicaSets)
-	replicaSets, err := clientset.AppsV1().ReplicaSets("").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("无法获取所有副本集: %v", err)
-	}
-
-	// 获取所有部署 (Deployments)
-	deployments, err := clientset.AppsV1().Deployments("").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("无法获取所有部署: %v", err)
-	}
-
-	// 获取所有守护进程集 (DaemonSets)
-	daemonSets, err := clientset.AppsV1().DaemonSets("").List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("无法获取所有守护进程集: %v", err)
-	}
-
-	var controllerResources []Middleware.ControllerResource
-
-	// 处理副本集 (ReplicaSets)
-	for _, replicaSet := range replicaSets.Items {
-		replicaCount := int32(0)
-		if replicaSet.Spec.Replicas != nil {
-			replicaCount = *replicaSet.Spec.Replicas
-		}
-
-		// 在 ControllerResource 中填充信息
-		controllerResource := Middleware.ControllerResource{
-			Namespace:      replicaSet.Namespace,
-			ControllerName: "ReplicaSet",
-			ReplicaCount:   replicaCount, // 添加副本集名称
-		}
-		controllerResources = append(controllerResources, controllerResource)
-	}
-
-	// 处理部署 (Deployments)
-	for _, deployment := range deployments.Items {
-		replicaCount := int32(0)
-		if deployment.Spec.Replicas != nil {
-			replicaCount = *deployment.Spec.Replicas
-		}
-
-		// 在 ControllerResource 中填充信息
-		controllerResource := Middleware.ControllerResource{
-			Namespace:      deployment.Namespace,
-			ControllerName: "Deployment",
-			ReplicaCount:   replicaCount, // 添加副本集名称
-		}
-		controllerResources = append(controllerResources, controllerResource)
-	}
-
-	// 处理守护进程集 (DaemonSets)
-	for _, daemonSet := range daemonSets.Items {
-		replicaCount := int32(0)
-		// 使用 DaemonSet Status 中的 DesiredNumberScheduled 字段
-		if daemonSet.Status.DesiredNumberScheduled > 0 {
-			replicaCount = daemonSet.Status.DesiredNumberScheduled
-		}
-
-		// 在 ControllerResource 中填充信息
-		controllerResource := Middleware.ControllerResource{
-			Namespace:      daemonSet.Namespace,
-			ControllerName: "DaemonSet",
-			ReplicaCount:   replicaCount,
-		}
-		controllerResources = append(controllerResources, controllerResource)
-	}
-
-	// 返回结构化数据而非直接返回JSON字符串
-	return controllerResources, nil
 }

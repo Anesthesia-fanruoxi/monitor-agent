@@ -84,16 +84,18 @@ type HeartSource struct {
 
 // ContainerResource 定义容器资源信息
 type ContainerResource struct {
-	Namespace      string  `json:"namespace"`      // Kubernetes 命名空间
-	PodName        string  `json:"podName"`        // Pod 名称
-	ControllerName string  `json:"controllerName"` // 控制器名称
-	Container      string  `json:"container"`      // 容器名称
-	LimitCpu       float64 `json:"limitCpu"`       // CPU 限制（核心数）
-	LimitMemory    int64   `json:"limitMemory"`    // 内存限制（字节）
-	RequestCpu     float64 `json:"requestCpu"`     // 请求的 CPU（核心数）
-	RequestMemory  int64   `json:"requestMemory"`  // 请求的内存（字节）
-	UseCpu         float64 `json:"useCpu"`         // 已使用的 CPU（核心数）
-	UseMemory      int64   `json:"useMemory"`      // 已使用的内存（字节）
+	Namespace           string  `json:"namespace"`           // Kubernetes 命名空间
+	PodName             string  `json:"podName"`             // Pod 名称
+	ControllerName      string  `json:"controllerName"`      // 控制器名称
+	Container           string  `json:"container"`           // 容器名称
+	LimitCpu            float64 `json:"limitCpu"`            // CPU 限制（核心数）
+	LimitMemory         int64   `json:"limitMemory"`         // 内存限制（字节）
+	RequestCpu          float64 `json:"requestCpu"`          // 请求的 CPU（核心数）
+	RequestMemory       int64   `json:"requestMemory"`       // 请求的内存（字节）
+	UseCpu              float64 `json:"useCpu"`              // 已使用的 CPU（核心数）
+	UseMemory           int64   `json:"useMemory"`           // 已使用的内存（字节）
+	RestartCount        int     `json:"restartCount"`        // 重启次数
+	LastTerminationTime int64   `json:"lastTerminationTime"` //上一次终止时间
 }
 
 // ControllerResource 定义控制器资源信息
