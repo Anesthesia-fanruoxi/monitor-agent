@@ -77,9 +77,10 @@ type NginxStatus struct {
 
 // HeartSource 定义心跳数据
 type HeartSource struct {
-	IsActive int    `json:"isActive"` // 是否活跃（1：活跃，0：不活跃）
-	Project  string `json:"project"`  // 项目名称
-	Hostname string `json:"hostname"` // 主机名
+	IsActive int     `json:"isActive"` // 是否活跃（1：活跃，0：不活跃）
+	Project  string  `json:"project"`  // 项目名称
+	Hostname string  `json:"hostname"` // 主机名
+	Version  float64 `json:"version"`  //当前版本号
 }
 
 // ContainerResource 定义容器资源信息

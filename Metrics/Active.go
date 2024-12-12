@@ -6,7 +6,7 @@ import (
 )
 
 // IsActive 方法：接收一个字符串，返回一个切片和错误信息
-func IsActive(input string) ([]Middleware.HeartSource, error) {
+func IsActive(input string, version float64) ([]Middleware.HeartSource, error) {
 	// 获取主机名
 	hostName, err := GetHostName()
 	if err != nil {
@@ -18,6 +18,7 @@ func IsActive(input string) ([]Middleware.HeartSource, error) {
 			Project:  input,
 			Hostname: hostName,
 			IsActive: 1,
+			Version:  version,
 		},
 	}
 
