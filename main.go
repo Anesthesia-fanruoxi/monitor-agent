@@ -49,13 +49,17 @@ func writePID() {
 	if err != nil {
 		log.Fatalf("无法创建 PID 文件: %v", err)
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+
+		}
+	}(file)
 
 	_, err = file.WriteString(fmt.Sprintf("%d\n", pid))
 	if err != nil {
 		log.Fatalf("无法写入 PID 文件: %v", err)
 	}
-	log.Printf("当前工作进程 PID 已写入 %s 文件\n", PIDFILE)
 }
 
 func subProcess(args []string) *exec.Cmd {
@@ -91,6 +95,7 @@ func work() {
 
 	// 如果启用了自动更新，启动心跳检查
 	if config.Agent.AutoUpdate {
+		log.Printf("已开启自动更新")
 		go Middleware.AutoChecks(Version)
 	}
 

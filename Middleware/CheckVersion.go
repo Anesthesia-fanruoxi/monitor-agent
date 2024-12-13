@@ -25,7 +25,12 @@ func getVersionFromServer(url string) (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("获取版本号失败: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+
+		}
+	}(resp.Body)
 
 	// 读取响应体内容
 	body, err := io.ReadAll(resp.Body)
@@ -87,7 +92,6 @@ echo "更新完成，当前版本为 %.2f"`, version, version, version, download
 		return fmt.Errorf("创建更新脚本失败: %v", err)
 	}
 
-	log.Printf("更新脚本已创建: %s", scriptPath)
 	return nil
 }
 
@@ -107,7 +111,6 @@ func executeUpdateScript() error {
 		return fmt.Errorf("执行更新脚本失败: %v", err)
 	}
 
-	log.Println("更新脚本执行成功")
 	return nil
 }
 
@@ -136,7 +139,6 @@ func CheckVersion(version string, url string) {
 		}
 
 		// 比较本地版本与远程版本
-		log.Printf("本地版本: %.2f, 远程版本: %.2f\n", localVersion, remoteVersion)
 		if isVersionsNotMatching(localVersion, remoteVersion) {
 			log.Printf("发现新版本! 本地版本: %.2f, 远程版本: %.2f\n", localVersion, remoteVersion)
 			if err := createUpdateScript(remoteVersion, url); err != nil {

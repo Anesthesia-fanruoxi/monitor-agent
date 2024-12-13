@@ -64,10 +64,10 @@ func SendData(url string, project string, data interface{}, key []byte, source s
 		}
 	}(resp.Body)
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	log.Printf("请求结果：%s", body)
+	//body, err := io.ReadAll(resp.Body)
+	//if err != nil {
+	//	return err
+	//}
+	//log.Printf("请求结果：%s", body)
 	return nil
 }
