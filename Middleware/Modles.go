@@ -106,3 +106,22 @@ type ControllerResource struct {
 	Container      string `json:"container"`       // 容器名称
 	ReplicaCount   int32  `json:"replica"`         // 副本数
 }
+
+// 配置结构体
+type ConfigFile struct {
+	Agent struct {
+		Project    string `yaml:"project"`
+		MetricsURL string `yaml:"metrics_url"`
+		AutoUpdate bool   `yaml:"auto_update"`
+	} `yaml:"agent"`
+	Metrics struct {
+		Ssl    struct{ Enable bool } `yaml:"ssl"`
+		Nginx  struct{ Enable bool } `yaml:"nginx"`
+		Harbor struct{ Enable bool } `yaml:"harbor"`
+		K8S    struct {
+			Enable     bool   `yaml:"enable"`
+			ConfigPath string `yaml:"config_path"`
+		} `yaml:"k8s"`
+	} `yaml:"metrics"`
+	Encrypted string `yaml:"encrypted"` // 加密密钥
+}

@@ -58,10 +58,10 @@ func createUpdateScript(version float64, url string) error {
 	downloadURL := fmt.Sprintf("%s/agent/agent", url)
 
 	// 脚本内容
-	scriptContent := fmt.Sprintf(`# 更新脚本，用于版本 %.1f 的更新
-echo "正在更新到版本 %.1f"
+	scriptContent := fmt.Sprintf(`# 更新脚本，用于版本 %.2f 的更新
+echo "正在更新到版本 %.2f"
 # 下载新版本
-curl -o agent-%.1f -w "%%{http_code}" -s %s
+curl -o agent-%.2f -w "%%{http_code}" -s %s
 if [ $? -ne 0 ]; then
     echo "下载新版本失败"
     exit 1
@@ -70,13 +70,16 @@ fi
 rm -f agent
 
 # 替换新版本
-mv agent-%.1f agent
+mv agent-%.2f agent
+
+# 加可执行权限
+chmod +x agent
 
 # 停止当前进程
-pkill agent
+cat work.pid |xargs kill 
 
 
-echo "更新完成，当前版本为 %.1f"`, version, version, downloadURL, version)
+echo "更新完成，当前版本为 %.2f"`, version, version, version, downloadURL, version, version)
 
 	// 创建或覆盖脚本文件
 	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
@@ -133,9 +136,9 @@ func CheckVersion(version string, url string) {
 		}
 
 		// 比较本地版本与远程版本
-		log.Printf("本地版本: %.1f, 远程版本: %.1f\n", localVersion, remoteVersion)
+		log.Printf("本地版本: %.2f, 远程版本: %.2f\n", localVersion, remoteVersion)
 		if isVersionsNotMatching(localVersion, remoteVersion) {
-			log.Printf("发现新版本! 本地版本: %.1f, 远程版本: %.1f\n", localVersion, remoteVersion)
+			log.Printf("发现新版本! 本地版本: %.2f, 远程版本: %.2f\n", localVersion, remoteVersion)
 			if err := createUpdateScript(remoteVersion, url); err != nil {
 				log.Printf("创建更新脚本失败: %v", err)
 				continue
@@ -151,7 +154,8 @@ func CheckVersion(version string, url string) {
 		time.Sleep(10 * time.Second)
 	}
 }
-func StartHeartbeatChecks(Version string) {
+
+func AutoChecks(Version string) {
 	config, err := LoadConfig()
 	if err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
