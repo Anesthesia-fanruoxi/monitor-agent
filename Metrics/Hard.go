@@ -33,6 +33,52 @@ func getCPUPercent() (float64, error) {
 	return 0, fmt.Errorf("无法读取 CPU 信息")
 }
 
+// 获取 CPU 核心数（使用提供的命令）
+func getCPUCount() (int, error) {
+	cmd := exec.Command("sh", "-c", "cat /proc/cpuinfo | grep 'processor' | wc -l")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	// 将输出的字节转换为整数
+	cpuCount, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return 0, err
+	}
+	return cpuCount, nil
+}
+
+// 获取 CPU 型号（使用提供的命令）
+func getCPUModel() (string, error) {
+	cmd := exec.Command("sh", "-c", "cat /proc/cpuinfo | grep 'model name' | uniq | cut -f2 -d: | xargs")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// 获取操作系统版本
+func getOSVersion() (string, error) {
+	cmd := exec.Command("sh", "-c", "cat /etc/redhat-release")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// 获取内核版本
+func getKernelVersion() (string, error) {
+	cmd := exec.Command("sh", "-c", "uname -r")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // 获取磁盘信息（通过 df 命令）
 func getDiskInfo() (uint64, uint64, uint64, float64, error) {
 	cmd := exec.Command("df", "-B1", "/")
@@ -146,6 +192,30 @@ func GetHostInfo() ([]Middleware.FlatSystemInfo, error) {
 		return nil, err
 	}
 
+	// 获取 CPU 核心数
+	cpuCount, err := getCPUCount()
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取 CPU 型号
+	cpuModel, err := getCPUModel()
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取操作系统版本
+	osVersion, err := getOSVersion()
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取内核版本
+	kernelVersion, err := getKernelVersion()
+	if err != nil {
+		return nil, err
+	}
+
 	// 将主机信息放入切片中
 	hostInfo := Middleware.FlatSystemInfo{
 		CPUPercent:        cpuPercent,
@@ -165,8 +235,11 @@ func GetHostInfo() ([]Middleware.FlatSystemInfo, error) {
 		CPULoad5:          cpu_load5,
 		CPULoad15:         cpu_load15,
 		HostName:          hostName,
+		CPUCount:          cpuCount,
+		CPUModel:          cpuModel,
+		OSVersion:         osVersion,
+		KernelVersion:     kernelVersion,
 	}
 	// 返回切片
 	return []Middleware.FlatSystemInfo{hostInfo}, nil
-
 }

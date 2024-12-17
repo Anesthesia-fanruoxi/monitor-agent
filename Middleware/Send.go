@@ -59,21 +59,18 @@ func SendData(url string, project string, data interface{}, key []byte, source s
 	if err != nil {
 		return err
 	}
-	log.Printf("原始数据大小: %d 字节，来源%s", len(jsonData), source) // 打印原始数据大小
 
 	// 压缩数据
 	compressedData, err := compress(jsonData)
 	if err != nil {
 		return err
 	}
-	log.Printf("压缩后数据大小: %d 字节，来源%s", len(compressedData), source) // 打印压缩后数据大小
 
 	// 加密数据
 	encryptedData, err := encrypt(compressedData, key)
 	if err != nil {
 		return err
 	}
-	log.Printf("加密后数据大小: %d 字节，来源%s", len(encryptedData), source) // 打印加密后数据大小
 
 	// 发送加密压缩后的数据
 	resp, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(encryptedData))

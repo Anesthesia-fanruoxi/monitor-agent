@@ -21,6 +21,10 @@ type FlatSystemInfo struct {
 	CPULoad5          float64 `json:"cpu_load_5"`          // 5分钟CPU负载
 	CPULoad15         float64 `json:"cpu_load_15"`         // 15分钟CPU负载
 	HostName          string  `json:"hostName"`            // 主机名
+	CPUCount          int     `json:"cpu_count"`           // CPU 核心数
+	CPUModel          string  `json:"cpu_model"`           // CPU 型号
+	OSVersion         string  `json:"os_version"`          // 操作系统版本
+	KernelVersion     string  `json:"kernel_version"`      // 内核版本
 }
 
 // DomainInfo 用于保存域名、备注和证书信息的结构体
