@@ -4,10 +4,37 @@ import (
 	"gopkg.in/yaml.v3"
 	"log"
 	"os"
+	"sync"
+	"time"
 )
 
-// 加载配置函数
+var (
+	cachedConfig     *ConfigFile
+	configMutex      sync.RWMutex
+	configLastLoaded time.Time
+	configCacheTTL   = 30 * time.Second // 配置缓存有效期
+)
+
+// 加载配置函数（带缓存，避免重复读取文件）
 func LoadConfig() (ConfigFile, error) {
+	configMutex.RLock()
+	// 检查缓存是否有效
+	if cachedConfig != nil && time.Since(configLastLoaded) < configCacheTTL {
+		config := *cachedConfig
+		configMutex.RUnlock()
+		return config, nil
+	}
+	configMutex.RUnlock()
+
+	// 缓存失效，重新加载
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	// 双重检查
+	if cachedConfig != nil && time.Since(configLastLoaded) < configCacheTTL {
+		return *cachedConfig, nil
+	}
+
 	var config ConfigFile
 	filePath := "config.yaml"
 
@@ -58,12 +85,7 @@ encrypted: ""`
 		if err != nil {
 			return config, err
 		}
-		defer func(file *os.File) {
-			err := file.Close()
-			if err != nil {
-
-			}
-		}(file)
+		defer func() { _ = file.Close() }()
 
 		// 写入带注释的默认配置内容
 		if _, err := file.WriteString(defaultConfig); err != nil {
@@ -79,17 +101,16 @@ encrypted: ""`
 	if err != nil {
 		return config, err
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
-	}(file)
+	defer func() { _ = file.Close() }()
 
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(&config); err != nil {
 		return config, err
 	}
+
+	// 更新缓存
+	cachedConfig = &config
+	configLastLoaded = time.Now()
 
 	return config, nil
 }

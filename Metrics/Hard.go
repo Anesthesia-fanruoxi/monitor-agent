@@ -7,11 +7,29 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
+)
+
+// CPU 采样缓存
+var (
+	lastCPUTotal uint64
+	lastCPUIdle  uint64
+	cpuMutex     sync.Mutex
+	cpuLastTime  time.Time
+
+	// 主机名缓存
+	cachedHostname     string
+	hostnameMutex      sync.RWMutex
+	hostnameLastLoaded time.Time
 )
 
 // ============================================获取基本硬件信息
-// 获取 CPU 使用率（通过读取 /proc/stat）
+// 获取 CPU 使用率（通过读取 /proc/stat，使用差值计算真实使用率）
 func getCPUPercent() (float64, error) {
+	cpuMutex.Lock()
+	defer cpuMutex.Unlock()
+
 	data, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return 0, err
@@ -27,7 +45,30 @@ func getCPUPercent() (float64, error) {
 			idle, _ := strconv.ParseUint(fields[4], 10, 64)
 
 			total := user + nice + system + idle
-			return 100 * float64(total-idle) / float64(total), nil
+
+			// 如果是第一次采样或者距离上次采样超过1分钟，初始化基线
+			if lastCPUTotal == 0 || time.Since(cpuLastTime) > time.Minute {
+				lastCPUTotal = total
+				lastCPUIdle = idle
+				cpuLastTime = time.Now()
+				// 第一次采样返回简单计算值
+				return 100 * float64(total-idle) / float64(total), nil
+			}
+
+			// 计算差值获取真实 CPU 使用率
+			totalDelta := total - lastCPUTotal
+			idleDelta := idle - lastCPUIdle
+
+			// 更新基线
+			lastCPUTotal = total
+			lastCPUIdle = idle
+			cpuLastTime = time.Now()
+
+			if totalDelta == 0 {
+				return 0, nil
+			}
+
+			return 100 * float64(totalDelta-idleDelta) / float64(totalDelta), nil
 		}
 	}
 	return 0, fmt.Errorf("无法读取 CPU 信息")
@@ -156,12 +197,33 @@ func getLoadInfo() (float64, float64, float64, error) {
 }
 
 func GetHostName() (string, error) {
+	// 检查缓存（主机名一般不会变，缓存时间可以长一些）
+	hostnameMutex.RLock()
+	if cachedHostname != "" && time.Since(hostnameLastLoaded) < 5*time.Minute {
+		hostname := cachedHostname
+		hostnameMutex.RUnlock()
+		return hostname, nil
+	}
+	hostnameMutex.RUnlock()
+
+	hostnameMutex.Lock()
+	defer hostnameMutex.Unlock()
+
+	// 双重检查
+	if cachedHostname != "" && time.Since(hostnameLastLoaded) < 5*time.Minute {
+		return cachedHostname, nil
+	}
+
 	data, err := os.ReadFile("/etc/hostname")
 	if err != nil {
 		return "", err
 	}
-	// 去除换行符和空格
-	return strings.TrimSpace(string(data)), nil
+
+	// 更新缓存
+	cachedHostname = strings.TrimSpace(string(data))
+	hostnameLastLoaded = time.Now()
+
+	return cachedHostname, nil
 }
 
 // 获取完整的系统信息

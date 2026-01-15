@@ -8,10 +8,19 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"time"
 )
+
+// 全局 HTTP 客户端，带超时和连接池复用
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
 // 加密数据
 func encrypt(data []byte, key []byte) ([]byte, error) {
@@ -72,17 +81,15 @@ func SendData(url string, project string, data interface{}, key []byte, source s
 		return err
 	}
 
-	// 发送加密压缩后的数据
-	resp, err := http.Post(url, "application/octet-stream", bytes.NewBuffer(encryptedData))
+	// 发送加密压缩后的数据（使用全局带超时的客户端）
+	resp, err := httpClient.Post(url, "application/octet-stream", bytes.NewBuffer(encryptedData))
 	if err != nil {
 		return err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Printf("关闭响应体失败: %v", err)
-		}
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+
+	// 必须读取并丢弃 response body，否则连接无法复用
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	return nil
 }

@@ -3,7 +3,7 @@ package Metrics
 import (
 	"context"
 	"fmt"
-	"log"
+	"sync"
 	"time"
 
 	"agent/Middleware"
@@ -16,9 +16,34 @@ import (
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
-// 初始化 Kubernetes 客户端和 Metrics 客户端
+// K8s 客户端缓存
+var (
+	k8sClientset     *kubernetes.Clientset
+	k8sMetricsClient *metricsclient.Clientset
+	k8sClientMutex   sync.RWMutex
+	k8sLastConfig    string
+)
+
+// 初始化 Kubernetes 客户端和 Metrics 客户端（带缓存复用）
 func InitializeClients(kubeconfig string) (*kubernetes.Clientset, *metricsclient.Clientset, error) {
-	//start := time.Now() // 开始计时
+	// 检查缓存
+	k8sClientMutex.RLock()
+	if k8sClientset != nil && k8sMetricsClient != nil && k8sLastConfig == kubeconfig {
+		clientset := k8sClientset
+		metricsClient := k8sMetricsClient
+		k8sClientMutex.RUnlock()
+		return clientset, metricsClient, nil
+	}
+	k8sClientMutex.RUnlock()
+
+	// 缓存未命中，重新创建
+	k8sClientMutex.Lock()
+	defer k8sClientMutex.Unlock()
+
+	// 双重检查
+	if k8sClientset != nil && k8sMetricsClient != nil && k8sLastConfig == kubeconfig {
+		return k8sClientset, k8sMetricsClient, nil
+	}
 
 	// 构建 Kubernetes 配置
 	var config *rest.Config
@@ -50,7 +75,11 @@ func InitializeClients(kubeconfig string) (*kubernetes.Clientset, *metricsclient
 		return nil, nil, fmt.Errorf("无法创建 Metrics 客户端: %v", err)
 	}
 
-	//log.Printf("初始化 Kubernetes 和 Metrics 客户端耗时: %v", time.Since(start)) // 打印耗时
+	// 更新缓存
+	k8sClientset = clientset
+	k8sMetricsClient = metricsClient
+	k8sLastConfig = kubeconfig
+
 	return clientset, metricsClient, nil
 }
 
@@ -143,34 +172,6 @@ func GetPodResources(clientset *kubernetes.Clientset, metricsClient *metricsclie
 
 	//log.Printf("获取所有 Pod 资源信息总耗时: %v", time.Since(start)) // 打印获取 Pod 资源的总耗时
 	return containerResources, nil
-}
-
-// 获取容器的重启时间戳
-func getContainerRestartTime(containerName string, containerStatuses []corev1.ContainerStatus) *time.Time {
-	for _, status := range containerStatuses {
-		if status.Name == containerName {
-			log.Printf("正在检查容器 %s 的状态", containerName)
-
-			// 检查容器是否有终止状态
-			if status.State.Terminated != nil {
-				log.Printf("容器 %s 终止状态，原因: %s，结束时间: %v", containerName, status.State.Terminated.Reason, status.State.Terminated.FinishedAt)
-				// 如果容器是由于错误或者终止而重启，返回重启时间
-				return &status.State.Terminated.FinishedAt.Time
-			}
-
-			// 如果容器处于运行状态，输出日志
-			if status.State.Running != nil {
-				log.Printf("容器 %s 当前处于运行状态，启动时间: %v", containerName, status.State.Running.StartedAt)
-			}
-
-			// 如果容器处于等待状态，输出日志
-			if status.State.Waiting != nil {
-				log.Printf("容器 %s 当前处于等待状态，原因: %s", containerName, status.State.Waiting.Reason)
-			}
-		}
-	}
-	log.Printf("未找到容器 %s 的重启时间", containerName)
-	return nil // 如果没有找到重启时间，则返回 nil
 }
 
 // 获取容器的重启次数

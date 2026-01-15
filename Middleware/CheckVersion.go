@@ -6,10 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -25,12 +25,7 @@ func getVersionFromServer(url string) (float64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("获取版本号失败: %v", err)
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-
-		}
-	}(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 
 	// 读取响应体内容
 	body, err := io.ReadAll(resp.Body)
@@ -52,63 +47,69 @@ func getVersionFromServer(url string) (float64, error) {
 
 // 判断本地版本和远程版本是否不匹配
 func isVersionsNotMatching(localVersion, remoteVersion float64) bool {
+	// 检查 localVersion 或 remoteVersion 是否为默认值 0
+	if localVersion == 0 || remoteVersion == 0 {
+		// 如果其中一个版本为 0，则跳过
+		return false
+	}
 	return localVersion != remoteVersion
 }
 
-// 创建更新脚本
-func createUpdateScript(version float64, url string) error {
-	// 脚本文件路径
-	scriptPath := "./update.sh"
-	// 拼接下载链接
-	downloadURL := fmt.Sprintf("%s/agent/agent", url)
-
-	// 脚本内容
-	scriptContent := fmt.Sprintf(`# 更新脚本，用于版本 %.2f 的更新
-echo "正在更新到版本 %.2f"
-# 下载新版本
-curl -o agent-%.2f -w "%%{http_code}" -s %s
-if [ $? -ne 0 ]; then
-    echo "下载新版本失败"
-    exit 1
-fi
-# 删除当前版本
-rm -f agent
-
-# 替换新版本
-mv agent-%.2f agent
-
-# 加可执行权限
-chmod +x agent
-
-# 停止当前进程
-cat work.pid |xargs kill 
-
-
-echo "更新完成，当前版本为 %.2f"`, version, version, version, downloadURL, version, version)
-
-	// 创建或覆盖脚本文件
-	err := os.WriteFile(scriptPath, []byte(scriptContent), 0755)
-	if err != nil {
-		return fmt.Errorf("创建更新脚本失败: %v", err)
-	}
-
-	return nil
-}
-
-// 执行更新脚本
-func executeUpdateScript() error {
-	// 锁定，以避免并发冲突
+// 执行更新：下载新版本并替换
+func executeUpdate(version float64, url string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// 脚本文件路径
-	scriptPath := "./update.sh"
+	downloadURL := fmt.Sprintf("%s/agent/agent", url)
+	newBinary := "./agent-new"
+	currentBinary := "./agent"
 
-	// 执行脚本
-	cmd := exec.Command("/bin/bash", scriptPath)
-	err := cmd.Run()
+	log.Printf("开始下载新版本 %.2f...", version)
+
+	// 下载新版本
+	resp, err := http.Get(downloadURL)
 	if err != nil {
-		return fmt.Errorf("执行更新脚本失败: %v", err)
+		return fmt.Errorf("下载失败: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载失败，HTTP状态码: %d", resp.StatusCode)
+	}
+
+	// 创建新文件
+	out, err := os.OpenFile(newBinary, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("创建文件失败: %v", err)
+	}
+
+	_, err = io.Copy(out, resp.Body)
+	_ = out.Close()
+	if err != nil {
+		_ = os.Remove(newBinary)
+		return fmt.Errorf("写入文件失败: %v", err)
+	}
+
+	log.Println("下载完成，正在替换二进制文件...")
+
+	// 替换二进制文件
+	if err := os.Rename(newBinary, currentBinary); err != nil {
+		_ = os.Remove(newBinary)
+		return fmt.Errorf("替换文件失败: %v", err)
+	}
+
+	log.Printf("更新完成，新版本: %.2f，正在原地重启...", version)
+
+	// 使用 syscall.Exec 原地替换当前进程，PID不变，容器无感知
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("获取可执行文件路径失败: %v", err)
+	}
+
+	// syscall.Exec 会用新程序替换当前进程，不会返回
+	err = syscall.Exec(exePath, os.Args, os.Environ())
+	if err != nil {
+		return fmt.Errorf("执行新版本失败: %v", err)
 	}
 
 	return nil
@@ -116,14 +117,6 @@ func executeUpdateScript() error {
 
 // 启动一个线程定期检查版本号
 func CheckVersion(version string, url string) {
-	// 检查脚本是否已存在，若存在则无需再次创建
-	scriptPath := "./update.sh"
-	if _, err := os.Stat(scriptPath); err == nil {
-		err := os.Remove(scriptPath)
-		if err != nil {
-			log.Printf("删除文件失败: %v", err)
-		}
-	}
 	for {
 		remoteVersion, err := getVersionFromServer(fmt.Sprintf("%s/version", url))
 		if err != nil {
@@ -141,13 +134,8 @@ func CheckVersion(version string, url string) {
 		// 比较本地版本与远程版本
 		if isVersionsNotMatching(localVersion, remoteVersion) {
 			log.Printf("发现新版本! 本地版本: %.2f, 远程版本: %.2f\n", localVersion, remoteVersion)
-			if err := createUpdateScript(remoteVersion, url); err != nil {
-				log.Printf("创建更新脚本失败: %v", err)
-				continue
-			}
-
-			if err := executeUpdateScript(); err != nil {
-				log.Printf("执行更新脚本失败: %v", err)
+			if err := executeUpdate(remoteVersion, url); err != nil {
+				log.Printf("更新失败: %v", err)
 				continue
 			}
 		}
@@ -162,11 +150,6 @@ func AutoChecks(Version string) {
 	if err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
-	// 启动 goroutine
-	go func() {
-		for {
-			CheckVersion(Version, config.Agent.MetricsURL)
-			time.Sleep(5 * time.Second) // 每 5 秒检查一次
-		}
-	}()
+	// 启动单个 goroutine 执行版本检查（CheckVersion 内部已有循环）
+	go CheckVersion(Version, config.Agent.MetricsURL)
 }

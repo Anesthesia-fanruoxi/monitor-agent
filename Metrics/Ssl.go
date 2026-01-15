@@ -25,12 +25,7 @@ func getSSLCertificateExpiration(domain string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	defer func(conn *tls.Conn) {
-		err := conn.Close()
-		if err != nil {
-
-		}
-	}(conn)
+	defer func() { _ = conn.Close() }()
 
 	certificates := conn.ConnectionState().PeerCertificates
 	if len(certificates) == 0 {
@@ -66,12 +61,7 @@ func extractDomainsFromFile(filePath string, re *regexp.Regexp, excludeLocal boo
 	if err != nil {
 		return nil, err
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
-	}(file)
+	defer func() { _ = file.Close() }()
 
 	var domainInfos []Middleware.DomainInfo
 	scanner := bufio.NewScanner(file)
